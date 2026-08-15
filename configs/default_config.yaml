@@ -1,0 +1,51 @@
+# Default Configuration for SEMICON KLA AI Image Restoration System
+
+system:
+  seed: 42
+  device: "auto" # "auto", "cuda", "cpu", or "mps"
+  use_amp: true # Mixed precision (FP16 / BF16) for NVIDIA H100/A100
+
+data:
+  image_size: 256
+  in_channels: 3
+  out_channels: 3
+  batch_size: 16
+  num_workers: 4
+
+degradation:
+  poisson_scale_range: [0.001, 0.05]
+  gaussian_std_range: [0.005, 0.08]
+  blur_kernel_size_range: [3, 9]
+  downsample_scale_range: [1.0, 4.0]
+
+model:
+  backbone: "NAFNet"
+  width: 64
+  enc_blk_nums: [2, 2, 4, 8]
+  middle_blk_num: 12
+  dec_blk_nums: [2, 2, 2, 2]
+  num_heads: 3 # Head 1: Restored, Head 2: Degradation params, Head 3: Uncertainty
+
+loss_weights:
+  l1: 1.0
+  ssim: 0.5
+  lpips: 0.2
+  gradient: 0.2
+  fft: 0.1
+  degradation: 0.5
+  uncertainty: 0.2
+
+training:
+  epochs: 100
+  lr: 0.0002
+  weight_decay: 0.0001
+  save_dir: "checkpoints"
+  checkpoint_interval: 10
+
+inference:
+  batch_size: 1
+  weights_path: "checkpoints/best_model.pth"
+
+offline_evaluation:
+  output_report_path: "docs/evaluation_report.md"
+  sample_outputs_dir: "results/evaluation_samples"
