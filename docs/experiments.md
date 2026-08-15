@@ -22,10 +22,10 @@ All quantitative metrics were evaluated on the 640 validation samples using seed
 
 | Model / Baseline | Architecture | Parameter Count | PSNR (dB) ↑ | SSIM ↑ | LPIPS ↓ | Model Load Time | Total Inference Time | Avg ms / img | Images / sec |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Baseline 1: Bicubic** | 2x Bicubic Interpolation | 0 | **22.65** | **0.8793** | N/A* | 0.0 ms | 5.63 s | 8.80 ms | 113.6 img/s |
-| **Baseline 2: DnCNN** | 7-Layer Conv+BN+ReLU Residual CNN | 186,177 | **22.80** | **0.8812** | N/A* | 56.46 ms | 158.86 s | 248.22 ms | 4.0 img/s |
+| **Baseline 1: Bicubic** | 2x Bicubic Interpolation | 0 | **22.65** | **0.8793** | **N/A\*** | 0.0 ms | 4.22 s | 6.60 ms | 151.5 img/s |
+| **Baseline 2: DnCNN** | 7-Layer Conv+BN+ReLU Residual CNN | 186,177 | **22.80** | **0.8812** | **N/A\*** | 69.54 ms | 124.94 s | 195.21 ms | 5.1 img/s |
 
-> \* **Note on LPIPS Calculation**: LPIPS requires 3-channel RGB inputs in $[-1, 1]$. In `baseline/evaluate_baseline.py`, 1-channel grayscale tensors are explicitly converted to 3-channel RGB tensors via `pred.repeat(1, 3, 1, 1)` and scaled to $[-1, 1]$. When the external `lpips` package is uninstalled/absent, the fallback reports `0.0000` with explicit logging.
+> \* **LPIPS Status**: `LPIPS unavailable: lpips package not installed`. (In `baseline/evaluate_baseline.py`, 1-channel grayscale tensors are converted to 3-channel RGB via `pred.repeat(1, 3, 1, 1)` and scaled to $[-1, 1]$ when `lpips` is installed. When uninstalled, LPIPS returns `null` in JSON / `N/A` in tables without returning fake `0.0000` values).
 
 ---
 

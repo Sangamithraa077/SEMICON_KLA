@@ -46,14 +46,15 @@ def parse_args():
     parser.add_argument("--num_save_samples", type=int, default=10, help="Number of representative validation images to save")
     return parser.parse_args()
 
-def compute_lpips_batch(lpips_model, pred_tensor: torch.Tensor, gt_tensor: torch.Tensor, device: torch.device) -> float:
+def compute_lpips_batch(lpips_model, pred_tensor: torch.Tensor, gt_tensor: torch.Tensor, device: torch.device):
     """Computes LPIPS score converting 1-channel grayscale tensors to 3-channel RGB.
     
     LPIPS requires 3-channel RGB input in [-1, 1].
     Conversion logic: repeat 1-channel along dim 1 and scale [0, 1] to [-1, 1].
+    Returns None if lpips_model is None.
     """
     if lpips_model is None:
-        return 0.0
+        return None
 
     if pred_tensor.shape[1] == 1:
         pred_rgb = pred_tensor.repeat(1, 3, 1, 1)
@@ -69,6 +70,7 @@ def compute_lpips_batch(lpips_model, pred_tensor: torch.Tensor, gt_tensor: torch
     with torch.no_grad():
         dist = lpips_model(pred_scaled.to(device), gt_scaled.to(device))
     return float(dist.mean().item())
+
 
 def evaluate_baselines():
     args = parse_args()
@@ -141,7 +143,10 @@ def evaluate_baselines():
 
             bicubic_psnrs.append(psnr_v)
             bicubic_ssims.append(ssim_v)
-            bicubic_lpipss.append(lpips_v)
+
+            if lpips_v is not None:
+                bicubic_lpipss.append(lpips_v)
+
 
             if saved_bicubic_count < args.num_save_samples:
                 save_name = os.path.splitext(fnames[i])[0] + ".png"
@@ -154,9 +159,10 @@ def evaluate_baselines():
 
     bicubic_mean_psnr = float(np.mean(bicubic_psnrs))
     bicubic_mean_ssim = float(np.mean(bicubic_ssims))
-    bicubic_mean_lpips = float(np.mean(bicubic_lpipss))
+    bicubic_mean_lpips = float(np.mean(bicubic_lpipss)) if bicubic_lpipss else None
 
-    print(f"Bicubic Results: PSNR = {bicubic_mean_psnr:.2f} dB | SSIM = {bicubic_mean_ssim:.4f} | LPIPS = {bicubic_mean_lpips:.4f}", flush=True)
+    lpips_str_bicubic = f"{bicubic_mean_lpips:.4f}" if bicubic_mean_lpips is not None else "N/A (lpips package not installed)"
+    print(f"Bicubic Results: PSNR = {bicubic_mean_psnr:.2f} dB | SSIM = {bicubic_mean_ssim:.4f} | LPIPS = {lpips_str_bicubic}", flush=True)
     print(f"Bicubic Runtime: Total = {bicubic_total_time:.3f}s | Avg = {bicubic_avg_ms:.2f} ms/img | Speed = {bicubic_fps:.1f} img/s", flush=True)
 
     # =========================================================================
@@ -204,14 +210,13 @@ def evaluate_baselines():
 
                 dncnn_psnrs.append(psnr_v)
                 dncnn_ssims.append(ssim_v)
-                dncnn_lpipss.append(lpips_v)
+                if lpips_v is not None:
+                    dncnn_lpipss.append(lpips_v)
 
                 if saved_dncnn_count < args.num_save_samples:
                     save_name = os.path.splitext(fnames[i])[0] + ".png"
                     save_image(rest_np, os.path.join(dncnn_save_dir, save_name))
                     saved_dncnn_count += 1
-
-
 
     dncnn_inference_time = time.time() - start_dncnn_inference
     dncnn_avg_ms = (dncnn_inference_time / val_count) * 1000.0
@@ -219,14 +224,17 @@ def evaluate_baselines():
 
     dncnn_mean_psnr = float(np.mean(dncnn_psnrs))
     dncnn_mean_ssim = float(np.mean(dncnn_ssims))
-    dncnn_mean_lpips = float(np.mean(dncnn_lpipss))
+    dncnn_mean_lpips = float(np.mean(dncnn_lpipss)) if dncnn_lpipss else None
 
-    print(f"DnCNN Results:   PSNR = {dncnn_mean_psnr:.2f} dB | SSIM = {dncnn_mean_ssim:.4f} | LPIPS = {dncnn_mean_lpips:.4f}")
-    print(f"DnCNN Runtime:   Inference = {dncnn_inference_time:.3f}s | Avg = {dncnn_avg_ms:.2f} ms/img | Speed = {dncnn_fps:.1f} img/s")
+    lpips_str_dncnn = f"{dncnn_mean_lpips:.4f}" if dncnn_mean_lpips is not None else "N/A (lpips package not installed)"
+    print(f"DnCNN Results:   PSNR = {dncnn_mean_psnr:.2f} dB | SSIM = {dncnn_mean_ssim:.4f} | LPIPS = {lpips_str_dncnn}", flush=True)
+    print(f"DnCNN Runtime:   Inference = {dncnn_inference_time:.3f}s | Avg = {dncnn_avg_ms:.2f} ms/img | Speed = {dncnn_fps:.1f} img/s", flush=True)
 
     # =========================================================================
     # 3. SAVE RESULTS TO JSON
     # =========================================================================
+    lpips_status_msg = "Measured using lpips package (VGG feature space)" if HAS_LPIPS else "LPIPS unavailable: lpips package not installed"
+
     results = {
         "dataset_info": {
             "total_paired_samples": 3200,
@@ -237,12 +245,12 @@ def evaluate_baselines():
             "scale_factor": 2.0,
             "seed": seed
         },
-        "lpips_note": "LPIPS calculated by repeating 1-channel grayscale to 3-channel RGB and scaling [0,1] -> [-1,1]",
+        "lpips_status": lpips_status_msg,
         "baselines": {
             "bicubic": {
                 "psnr": round(bicubic_mean_psnr, 2),
                 "ssim": round(bicubic_mean_ssim, 4),
-                "lpips": round(bicubic_mean_lpips, 4),
+                "lpips": round(bicubic_mean_lpips, 4) if bicubic_mean_lpips is not None else None,
                 "runtime": {
                     "total_inference_seconds": round(bicubic_total_time, 3),
                     "avg_ms_per_image": round(bicubic_avg_ms, 2),
@@ -255,7 +263,7 @@ def evaluate_baselines():
                 "weights_checkpoint": args.dncnn_weights,
                 "psnr": round(dncnn_mean_psnr, 2),
                 "ssim": round(dncnn_mean_ssim, 4),
-                "lpips": round(dncnn_mean_lpips, 4),
+                "lpips": round(dncnn_mean_lpips, 4) if dncnn_mean_lpips is not None else None,
                 "runtime": {
                     "model_load_seconds": round(dncnn_load_time, 4),
                     "total_inference_seconds": round(dncnn_inference_time, 3),
@@ -270,8 +278,9 @@ def evaluate_baselines():
     with open(args.output_json, "w") as f:
         json.dump(results, f, indent=2)
 
-    print(f"\n[Evaluate] Saved baseline comparison metrics to: {args.output_json}")
+    print(f"\n[Evaluate] Saved baseline comparison metrics to: {args.output_json}", flush=True)
     return results
+
 
 if __name__ == "__main__":
     evaluate_baselines()
