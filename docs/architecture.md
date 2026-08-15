@@ -1,119 +1,91 @@
-# Architecture Specification - SEMICON KLA AI Image Restoration System
+# System Architecture & Technical Specifications
 
-## System Overview
-This project implements an AI-based image restoration system tailored for degraded semiconductor wafer inspection images (such as Scanning Electron Microscopy [SEM] and optical inspection images). The architecture is designed to handle signal-dependent Poisson-Gaussian noise, optical/defocus blur, downsampling/resolution loss, and charging artifacts while estimating restoration uncertainty and degradation characteristics.
+## 🏛️ Locked Architecture Overview
 
----
-
-## 1. Locked System Architecture
+The KLA SEMICON AI Image Restoration System implements a unified multi-head neural network powered by a shared lightweight NAFNet-style gated CNN encoder-decoder backbone.
 
 ```
-                                    +-----------------------------------------+
-                                    |        Input Degraded Image (x)         |
-                                    +-----------------------------------------+
-                                                         |
-                                                         v
-                                    +-----------------------------------------+
-                                    |     Shared Encoder-Decoder Backbone     |
-                                    |      (NAFNet Gated CNN Architecture)    |
-                                    +-----------------------------------------+
-                                                         |
-                   +-------------------------------------+-------------------------------------+
-                   |                                     |                                     |
-                   v                                     v                                     v
-     +---------------------------+         +---------------------------+         +---------------------------+
-     |          HEAD 1           |         |          HEAD 2           |         |          HEAD 3           |
-     |   Restored Image Output   |         |   Degradation Parameter   |         |   Per-Pixel Confidence /  |
-     |     (\hat{I}_{restored})   |         |      Estimation (\hat{\theta})|        |   Uncertainty Map (\hat{U})|
-     +---------------------------+         +---------------------------+         +---------------------------+
+Input: 128x128 Grayscale NoisyLR
+          ↓
+┌────────────────────────────────────────────────────────┐
+│ Shared NAFNet-Style Gated CNN Encoder-Decoder Backbone │
+│ Level 1 (128x128) -> Level 2 (64x64) -> Bottleneck     │
+│ -> Level 2 Decoder -> Level 1 Shared Features (128x128)│
+└────────────────────────────────────────────────────────┘
+          ↓ Shared Features [B, 32, 128, 128]
+          ├───────────────────────────────┬───────────────────────────────┐
+          ↓                               ↓                               ↓
+┌───────────────────────────┐   ┌───────────────────────────┐   ┌───────────────────────────┐
+│  Head 1: Restoration      │   │  Head 2: Degradation Est. │   │  Head 3: Uncertainty      │
+│  PixelShuffle 2x          │   │  Global Avg Pool + MLP    │   │  PixelShuffle 2x          │
+│  Output: [B, 1, 256, 256] │   │  Output: [B, 4]           │   │  Output: [B, 1, 256, 256] │
+│  Range: [0.0, 1.0]        │   │  Parameters:              │   │  Clamped Log-Variance     │
+│                           │   │  poisson, gaussian,       │   │  Range: [-10.0, 10.0]     │
+│                           │   │  blur, downsample         │   │                           │
+└───────────────────────────┘   └───────────────────────────┘   └───────────────────────────┘
 ```
 
-### 1.1 Shared Backbone (NAFNet Gated CNN)
-- **Design Philosophy**: Nonlinear Activation Free (NAFNet) block structure utilizing SimpleGate (element-wise multiplication replacing traditional non-linear activations like ReLU/GELU) and Simplified Channel Attention (SCA).
-- **Encoder-Decoder Pipeline**: Multi-scale feature extraction with skip connections to preserve high-frequency semiconductor pattern edges.
+---
 
-### 1.2 Multi-Head Outputs
-1. **Head 1 (Restoration Head)**: Predicts the clean high-resolution semiconductor image $\hat{I}_{restored} \in \mathbb{R}^{C \times H \times W}$.
-2. **Head 2 (Degradation Head)**: Estimates degradation vector $\hat{\theta}_{deg} = [\sigma_p, \sigma_g, k_{blur}, s_{scale}]$, representing Poisson noise scale, Gaussian noise std, blur kernel parameter, and downsampling factor.
-3. **Head 3 (Uncertainty Head)**: Outputs per-pixel uncertainty map $\hat{U} \in \mathbb{R}^{1 \times H \times W}$ (where values correspond to predicted variance/error bound), yielding a per-pixel confidence map $\hat{C} = 1 / (1 + \hat{U})$.
+## 🧱 1. Shared Backbone (NAFNet-Style Gated CNN)
+
+The backbone is entirely **convolution-based**, avoiding transformers, self-attention, diffusion models, or GANs to ensure lightweight, real-time H100 GPU and CPU execution.
+
+### Components:
+1. **SimpleGate**: Non-linear activation-free gating mechanism. Splits channels $2C \to (C, C)$ and computes elementwise multiplication ($y = x_1 \odot x_2$).
+2. **SCA (Simplified Channel Attention)**: Computes global average pooling per channel and applies channel weighting ($y = x \odot \text{Conv}_{1\times 1}(\text{GAP}(x))$).
+3. **NAFBlock**:
+   - `LayerNorm2d(C)`
+   - $1\times 1$ Pointwise Conv ($C \to 2C$)
+   - $3\times 3$ Depthwise Conv ($2C \to 2C$, `groups=2C`)
+   - `SimpleGate` ($2C \to C$)
+   - `SCA` ($C \to C$)
+   - $1\times 1$ Pointwise Conv ($C \to C$)
+   - Residual Skip Connection ($y = x + \text{Block}(x)$)
+4. **Encoder-Decoder Multi-Stage Architecture**:
+   - **Input Stem**: $3\times 3$ Conv ($1 \to 32$)
+   - **Encoder Stage 1**: 2 NAFBlocks ($32 \times 128 \times 128$) $\to$ $2\times 2$ Conv Stride 2 ($32 \to 64$)
+   - **Encoder Stage 2**: 2 NAFBlocks ($64 \times 64 \times 64$) $\to$ $2\times 2$ Conv Stride 2 ($64 \to 128$)
+   - **Bottleneck Stage 3**: 4 NAFBlocks ($128 \times 32 \times 32$)
+   - **Decoder Stage 2**: Transposed Conv $2\times$ ($128 \to 64$) + Concat Skip + 2 NAFBlocks ($64 \times 64 \times 64$)
+   - **Decoder Stage 1**: Transposed Conv $2\times$ ($64 \to 32$) + Concat Skip + 2 NAFBlocks ($32 \times 128 \times 128$)
 
 ---
 
-## 2. Domain-Informed Synthetic Degradation Pipeline
+## 🎯 2. Specialized Task Prediction Heads
 
-The semiconductor synthetic degradation model accurately simulates physics of SEM imaging and optical inspection:
-- **Poisson-Gaussian Noise**: 
-  $$y = x + \sqrt{\sigma_g^2 + \sigma_p^2 x} \odot \epsilon, \quad \epsilon \sim \mathcal{N}(0, I)$$
-  where $\sigma_p$ represents photon shot noise (Poisson) and $\sigma_g$ represents electronic read noise (Gaussian).
-- **Optical / SEM Blur**: Anisotropic Gaussian kernels and defocus modulation.
-- **Resolution Loss**: Signal-dependent downsampling (bicubic/bilinear).
-- **Parameter Logging**: Every synthetically generated sample logs exact degradation parameters $\theta_{deg}$, providing ground-truth pseudo-labels for Head 2 training.
+### Head 1: Image Restoration Head (`RestorationHead`)
+- **Input**: Shared decoder features $[B, 32, 128, 128]$
+- **Upsampling**: Learnable $2\times$ PixelShuffle ($32 \to 32 \cdot 2^2 = 128 \to 32$ at $256\times 256$)
+- **Refinement**: $3\times 3$ Conv $\to$ GELU $\to 1\times 1$ Conv $\to$ Sigmoid
+- **Output**: $[B, 1, 256, 256]$ restored grayscale image in $[0.0, 1.0]$.
 
----
+### Head 2: Degradation Estimation Head (`DegradationHead`)
+- **Input**: Shared decoder features $[B, 32, 128, 128]$
+- **Pooling & MLP**: Global Average Pooling $[B, 32]$ $\to$ Linear($32 \to 64$) $\to$ GELU $\to$ Linear($64 \to 4$)
+- **Output**: $[B, 4]$ predicting logged degradation parameters (`poisson_scale`, `gaussian_std`, `blur_ksize`, `downsample_scale`).
+- **Supervision Note**: Real paired NoisyLR images do NOT contain known ground-truth degradation labels. Degradation loss is configurable and optional, using synthetic degradation samples for supervision in Phase 4.
 
-## 3. Training Objective & Loss Functions
-
-The multi-task combined loss objective is defined as:
-
-$$\mathcal{L}_{total} = \lambda_1 \mathcal{L}_1 + \lambda_{ssim} \mathcal{L}_{SSIM} + \lambda_{lpips} \mathcal{L}_{LPIPS} + \lambda_{grad} \mathcal{L}_{grad} + \lambda_{fft} \mathcal{L}_{fft} + \lambda_{deg} \mathcal{L}_{deg} + \lambda_{unc} \mathcal{L}_{unc}$$
-
-- **$\mathcal{L}_1$ (Pixel Loss)**: $\| \hat{I}_{restored} - I_{clean} \|_1$
-- **$\mathcal{L}_{SSIM}$ (Structural Loss)**: $1 - \text{SSIM}(\hat{I}_{restored}, I_{clean})$
-- **$\mathcal{L}_{LPIPS}$ (Perceptual Loss)**: VGG/AlexNet feature space distance.
-- **$\mathcal{L}_{grad}$ (Edge Loss)**: Gradient map magnitude error ($\|\nabla \hat{I} - \nabla I\|_1$) for sharp wafer edges.
-- **$\mathcal{L}_{fft}$ (Frequency Loss)**: High-frequency spectrum error ($\|\mathcal{F}(\hat{I}) - \mathcal{F}(I)\|_1$).
-- **$\mathcal{L}_{deg}$ (Degradation Loss)**: MSE loss between predicted degradation parameters $\hat{\theta}_{deg}$ and logged pseudo-labels $\theta_{deg}$.
-- **$\mathcal{L}_{unc}$ (Uncertainty Loss)**: Heteroscedastic negative log-likelihood loss:
-  $$\mathcal{L}_{unc} = \frac{\|\hat{I}_{restored} - I_{clean}\|^2}{2\hat{U}} + \frac{1}{2}\log \hat{U}$$
+### Head 3: Per-Pixel Uncertainty Head (`UncertaintyHead`)
+- **Input**: Shared decoder features $[B, 32, 128, 128]$
+- **Upsampling**: Learnable $2\times$ PixelShuffle ($32 \to 32 \cdot 2^2 = 128 \to 32$ at $256\times 256$)
+- **Output Representation**: Spatially aligned log-variance $\log(\sigma^2)$ map $[B, 1, 256, 256]$.
+- **Clamping**: Clamped to $[-10.0, 10.0]$ for numerical stability in heteroscedastic uncertainty loss.
+- **Interpretation**: Higher log-variance = Higher uncertainty; Lower log-variance = Higher confidence.
 
 ---
 
-## 4. Pipeline Specifications
+## 📊 3. Model Size & Memory Footprint
 
-### A. Training Pipeline
-- **Input**: Clean high-resolution semiconductor dataset.
-- **On-the-fly Data Augmentation**: Domain-informed synthetic degradation generator applies Poisson-Gaussian noise, blur, downsampling, and returns $(x_{degraded}, I_{clean}, \theta_{deg})$.
-- **Forward Pass**: Multi-head model processes $x_{degraded}$ to compute $(\hat{I}_{restored}, \hat{\theta}_{deg}, \hat{U})$.
-- **Loss Computation**: Total combined multi-task loss is computed and backpropagated.
-- **Optimization**: AdamW optimizer with cosine annealing learning rate scheduler.
-- **Mixed Precision**: Automatic Mixed Precision (`torch.cuda.amp` FP16 / BF16) enabled for high-throughput training on NVIDIA H100 / A100 GPUs.
-- **Checkpointing**: Validates PSNR/SSIM on validation set and saves best model weights to `checkpoints/best_model.pth`.
-
-### B. Timed Inference Pipeline (`inference.py`)
-- **Strict Constraint**: Must be fast, self-contained, and perform ZERO heavy metric calculations or report generations.
-- **Command Line Signature**:
-  ```bash
-  python inference.py --input_dir <path_to_inputs> --output_dir <path_to_outputs> [--config <path>] [--weights <path>] [--device <auto|cuda|cpu>]
+- **Total Trainable Parameters**: **555,142**
+- **FP32 Parameter Memory**: **2.12 MB**
+- **FP16 Parameter Memory**: **1.06 MB**
+- **Single Forward Pass Contract**: Accepts $[B, 1, 128, 128]$ and returns:
+  ```python
+  {
+      "restored": [B, 1, 256, 256],
+      "degradation": [B, 4],
+      "confidence": [B, 1, 256, 256]
+  }
   ```
-- **Execution Flow**:
-  1. Parse input/output directories and load configuration.
-  2. Initialize model architecture and load trained checkpoint weights.
-  3. Scan `--input_dir` for supported image formats (`.png`, `.jpg`, `.jpeg`, `.tif`, `.tiff`, `.bmp`).
-  4. Process images in optimized mini-batches (or image-by-image for large tiles).
-  5. Run forward pass to generate $\hat{I}_{restored}$.
-  6. Save restored images directly into `--output_dir` maintaining original filenames.
-- **Portability**: Path-agnostic, works on Windows/Linux/macOS, auto-detects GPU (H100/CUDA) or falls back to CPU cleanly.
-
-### C. Offline Evaluation & Reporting Pipeline (`scripts/evaluate_offline.py`)
-- **Strict Isolation**: Runs strictly offline AFTER inference completes; NEVER runs during timed inference benchmarks.
-- **Metrics Computation**: Full quantitative evaluation calculating PSNR, SSIM, LPIPS, and per-pixel uncertainty stats across evaluation sets.
-- **Baseline Comparison**: Compares multi-head network against mandatory baselines (Bicubic upsampling, DnCNN/BM3D).
-- **Report Generation**:
-  - Automatically mines representative success cases (low uncertainty, high PSNR gain) and failure cases (high uncertainty, residual artifacts).
-  - Produces structured Markdown / HTML failure-analysis reports (`docs/evaluation_report.md`).
-
-### D. Demo Pipeline (`scripts/demo.py`)
-- **Interactive Workbench**: Command-line or UI script for side-by-side visualization.
-- **Visual Quad-Display**:
-  1. Input Degraded Image ($x$)
-  2. Baseline Result (Bicubic / Denoised)
-  3. Multi-Head Restored Image ($\hat{I}_{restored}$)
-  4. Per-Pixel Confidence/Uncertainty Heatmap ($\hat{C} / \hat{U}$) alongside estimated degradation vector $\hat{\theta}_{deg}$.
-
----
-
-## 5. Hardware & Portability Standards
-
-- **Target Compute**: NVIDIA H100 GPU (supports BF16 tensor cores and high batch throughput).
-- **Fallback Compute**: Standard NVIDIA GPUs (CUDA), Apple Silicon (MPS), and CPU fallback.
-- **Configurability**: Zero hardcoded local absolute paths (such as `C:\Users\...`). All paths are specified via relative configs or CLI arguments.
+- **Single Forward Pass Execution**: All three heads share the exact same backbone features in one pass.
