@@ -20,20 +20,56 @@ Input Image ---> [ NAFNet Backbone ] ---> Head 1: Restored Image
 
 ---
 
-## 🚀 Quick Start & Timed Inference
+## 📊 Dataset Preparation & Pipeline Setup
+
+### 1. Dataset Directory Layout
+Place or configure your `.npy` or image files according to the structure:
+```
+data/
+├── train/
+│   ├── GT/         # High-Resolution clean images (e.g. 256x256 .npy)
+│   └── NoisyLR/    # Degraded Low-Resolution images (e.g. 128x128 .npy)
+└── test/
+    └── NoisyLR/    # Test degraded images (e.g. 128x128 .npy)
+```
+
+Configure local dataset paths in `configs/default_config.yaml`:
+```yaml
+data:
+  mode: "paired"
+  train_gt_dir: "/path/to/train/GT"
+  train_noisy_dir: "/path/to/train/NoisyLR"
+  test_noisy_dir: "/path/to/test/NoisyLR"
+  val_ratio: 0.2
+```
+
+### 2. Validate Dataset Integrity
+Run the dataset validation tool to verify shapes, min/max/mean/std ranges, split sizes, and check for corrupted files:
+```bash
+py scripts/validate_dataset.py --config configs/default_config.yaml
+```
+
+### 3. Run Dataset Unit Tests
+Execute the dataset test suite to verify determinism, transforms, and DataLoader batching:
+```bash
+py -m unittest tests/test_dataset.py
+```
+
+### 4. Visualize Degradation Sample
+Generate a side-by-side comparison of a clean sample vs synthetic Poisson-Gaussian degradation:
+```bash
+py scripts/visualize_sample.py --config configs/default_config.yaml
+```
+
+---
+
+## 🚀 Timed Inference
 
 The mandatory evaluation script is `inference.py`. It accepts input and output directories and operates device-agnostically:
 
 ```bash
-python inference.py --input_dir ./path/to/inputs --output_dir ./path/to/outputs
+py inference.py --input_dir ./path/to/inputs --output_dir ./path/to/outputs
 ```
-
-### Options:
-- `--input_dir`: Path to folder containing input degraded images (Required).
-- `--output_dir`: Path to folder where restored images will be saved (Required).
-- `--config`: Path to custom YAML configuration file (Default: `configs/default_config.yaml`).
-- `--weights`: Path to trained model weights checkpoint.
-- `--device`: Target compute device (`auto`, `cuda`, `cpu`, `mps`).
 
 ---
 
@@ -41,29 +77,3 @@ python inference.py --input_dir ./path/to/inputs --output_dir ./path/to/outputs
 
 - **Architecture Specification**: [docs/architecture.md](docs/architecture.md)
 - **Implementation Status & TODOs**: [docs/implementation_status.md](docs/implementation_status.md)
-
----
-
-## 📁 Repository Structure
-
-```
-SEMICON_KLA/
-├── configs/
-│   └── default_config.yaml       # Path-agnostic system parameters
-├── docs/
-│   ├── architecture.md           # Full system architecture documentation
-│   └── implementation_status.md  # Implementation audit and phased roadmap
-├── src/
-│   ├── models/                   # Backbone, multi-head network, and baselines
-│   ├── degradation/              # Poisson-Gaussian noise & synthetic pipeline
-│   ├── losses/                   # Multi-component loss objectives
-│   ├── evaluation/               # Metrics calculation & offline report agent
-│   └── utils/                    # Config parsing and image I/O
-├── scripts/
-│   ├── train.py                  # Training pipeline entry point
-│   ├── demo.py                   # Visual quad-display demo script
-│   └── evaluate_offline.py       # Offline evaluation and report generation script
-├── inference.py                  # Mandatory timed inference script (--input_dir, --output_dir)
-├── requirements.txt              # System dependencies
-└── README.md
-```

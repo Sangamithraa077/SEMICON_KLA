@@ -6,17 +6,24 @@ system:
   use_amp: true # Mixed precision (FP16 / BF16) for NVIDIA H100/A100
 
 data:
+  mode: "paired" # "paired", "synthetic", or "test"
+  train_gt_dir: "C:/Users/abise/Downloads/train/train/GT"
+  train_noisy_dir: "C:/Users/abise/Downloads/train/train/NoisyLR"
+  test_noisy_dir: "C:/Users/abise/Downloads/Test_NoisyLR/NoisyLR"
+  val_ratio: 0.2
   image_size: 256
-  in_channels: 3
-  out_channels: 3
+  crop_size: 128
+  scale_factor: 2.0
+  in_channels: 1
+  out_channels: 1
   batch_size: 16
   num_workers: 4
 
 degradation:
-  poisson_scale_range: [0.001, 0.05]
-  gaussian_std_range: [0.005, 0.08]
-  blur_kernel_size_range: [3, 9]
-  downsample_scale_range: [1.0, 4.0]
+  poisson_scale_range: [0.005, 0.04]
+  gaussian_std_range: [0.005, 0.05]
+  blur_kernel_size_range: [1, 7]
+  downsample_scale_range: [1.0, 2.0]
 
 model:
   backbone: "NAFNet"
