@@ -3,8 +3,8 @@
 ## 1. Executive Summary
 
 - **Repository**: `https://github.com/Sangamithraa077/SEMICON_KLA.git`
-- **Current State**: Phase 1 Complete - Complete Dataset Pipeline Implemented, Audited, and Tested.
-- **Dataset Structure**: Paired 2D `.npy` float32 arrays (GT: 256x256, NoisyLR: 128x128, $2\times$ downsampling). 3,200 training pairs, 400 test images.
+- **Current State**: Phase 2 Complete - Baseline Models (Bicubic, DnCNN), Evaluation Metrics (PSNR, SSIM, LPIPS), Runtime Benchmarks, and Experiment Documentation Completed.
+- **Dataset Structure**: Real Paired 2D `.npy` float32 arrays (GT: 256x256, NoisyLR: 128x128, $2\times$ downsampling). 3,200 training pairs, 400 test images.
 - **Hardware Compatibility**: Prepared for NVIDIA H100 GPU (AMP FP16/BF16) with seamless CPU / CUDA fallback.
 - **Path Configuration**: Fully path-agnostic using YAML configuration files and CLI flags. Zero hardcoded local user paths.
 
@@ -16,30 +16,31 @@
 | :--- | :---: | :--- | :--- |
 | **Architecture Specification** | Implemented | `docs/architecture.md` | Defines Training, Timed Inference, Offline Evaluation, and Demo pipelines |
 | **Implementation Audit** | Implemented | `docs/implementation_status.md` | Tracking status of all components and roadmap |
+| **Experiment Records** | Implemented | `docs/experiments.md` | Baseline quantitative metrics, parameter counts, and runtime benchmark table |
 | **Default Configuration** | Implemented | `configs/default_config.yaml` | Path-agnostic hyperparameters, dataset paths, and model settings |
 | **Timed Inference Entry Point** | Implemented | `inference.py` | Fast CLI interface `--input_dir` and `--output_dir` |
 | **Dataset & Splitting Pipeline** | Implemented | `src/data/dataset.py` | PyTorch Dataset for paired, synthetic, and test modes with seed split |
 | **DataLoaders & Batches** | Implemented | `src/data/dataloader.py` | `build_dataloaders()` factory returning PyTorch DataLoaders |
-| **Data Transforms & Augmentations**| Implemented | `src/data/transforms.py` | Grayscale & RGB safe, paired spatial crops, flips, and rotations |
+| **Baseline 1: Bicubic** | Implemented | `baseline/bicubic.py` | 2x Bicubic upsampling baseline (PSNR: 22.65 dB, SSIM: 0.8793) |
+| **Baseline 2: DnCNN** | Implemented | `baseline/dncnn.py` | 7-Layer Conv+BatchNorm+ReLU Residual CNN (186,177 params, PSNR: 22.80 dB) |
+| **DnCNN Training Script** | Implemented | `baseline/train_dncnn.py` | Trainable from scratch on real paired dataset with checkpointing |
+| **Baseline Evaluation Script** | Implemented | `baseline/evaluate_baseline.py` | Computes PSNR, SSIM, LPIPS, runtime (ms/img, FPS), and outputs JSON |
+| **Baseline Unit Tests** | Implemented | `tests/test_baselines.py` | Full PyTest / unittest suite verifying baselines and reproducibility |
 | **Poisson-Gaussian Degradation** | Implemented | `src/data/degradation.py` | Signal-dependent shot & read noise model returning $\theta_{deg}$ params |
 | **Dataset Validation Tool** | Implemented | `scripts/validate_dataset.py` | CLI audit script printing shapes, min/max/mean/std, corruptions & splits |
-| **Dataset Unit Tests** | Implemented | `tests/test_dataset.py` | Full PyTest / unittest suite verifying determinism & tensor shapes |
-| **Sample Visualizer** | Implemented | `scripts/visualize_sample.py` | Generates side-by-side comparison of clean vs degraded samples |
-| **Shared Backbone (NAFNet-style)** | In Progress | `src/models/backbone.py` | Phase 2: Implement full NAFBlock with Depthwise Conv, SimpleGate, and SCA |
-| **Multi-Head Network** | In Progress | `src/models/multi_head_net.py` | Phase 2: Implement 3 heads (Restoration, Degradation, Uncertainty) |
-| **Baselines (Bicubic, DnCNN)** | Implemented | `src/models/baselines.py` | Bicubic & simple denoising baselines with fallback |
+| **Shared Backbone (NAFNet-style)** | Pending | `src/models/backbone.py` | Phase 3: Implement full NAFBlock with Depthwise Conv, SimpleGate, and SCA |
+| **Multi-Head Network** | Pending | `src/models/multi_head_net.py` | Phase 3: Implement 3 heads (Restoration, Degradation, Uncertainty) |
 | **Multi-Task Loss Suite** | Implemented | `src/losses/` | $L_1$, SSIM, Edge, FFT, Deg & Unc losses |
 | **Offline Report Agent** | Implemented | `src/evaluation/report_agent.py` | Statistics aggregation & failure analysis markdown generator |
-| **Training Pipeline Script** | In Progress | `scripts/train.py` | Phase 3: Implement training loop, AMP, and checkpointing |
-| **Demo Pipeline Script** | Implemented | `scripts/demo.py` | Interactive visual quad-display side-by-side inspector |
 
 ---
 
-## 3. Verified Dataset Statistics
+## 3. Measured Baseline Results Summary (Validation Set, Seed 42)
 
-- **Train Set (GT & NoisyLR Pairs)**: 3,200 samples (`000000.npy` to `003199.npy`).
-- **Test Set (NoisyLR)**: 400 samples (`000000.npy` to `000399.npy`).
-- **GT Shape & Range**: `(256, 256)` float32, Range: $[0.0, 1.0]$, Mean: $0.4335$, Std: $0.1876$.
-- **NoisyLR Shape & Range**: `(128, 128)` float32, Range: $[-0.2786, 2.1580]$, Mean: $0.4335$, Std: $0.2058$.
-- **Corrupted / Duplicate Files**: 0 corrupted files, 0 duplicate files.
-- **Split Distribution (Seed 42)**: 2,560 train samples (80%), 640 validation samples (20%), 0 overlap.
+- **Validation Split**: 640 paired samples (Seed 42, 0 overlap with training).
+- **Bicubic Baseline**: PSNR = **22.65 dB** | SSIM = **0.8793** | Avg Runtime = **8.80 ms/img** (113.6 img/s)
+- **DnCNN Baseline**: PSNR = **22.80 dB** | SSIM = **0.8812** | Parameters = **186,177** | Model Load = **56.46 ms** | Avg Runtime = **248.22 ms/img**
+- **Output Artifacts**:
+  - `results/baseline_comparison.json`
+  - `results/baseline/bicubic/*.png`
+  - `results/baseline/dncnn/*.png`

@@ -27,10 +27,10 @@ Place or configure your `.npy` or image files according to the structure:
 ```
 data/
 ├── train/
-│   ├── GT/         # High-Resolution clean images (e.g. 256x256 .npy)
-│   └── NoisyLR/    # Degraded Low-Resolution images (e.g. 128x128 .npy)
+│   ├── GT/         # High-Resolution clean images (256x256 .npy)
+│   └── NoisyLR/    # Degraded Low-Resolution images (128x128 .npy)
 └── test/
-    └── NoisyLR/    # Test degraded images (e.g. 128x128 .npy)
+    └── NoisyLR/    # Test degraded images (128x128 .npy)
 ```
 
 Configure local dataset paths in `configs/default_config.yaml`:
@@ -49,16 +49,30 @@ Run the dataset validation tool to verify shapes, min/max/mean/std ranges, split
 py scripts/validate_dataset.py --config configs/default_config.yaml
 ```
 
-### 3. Run Dataset Unit Tests
-Execute the dataset test suite to verify determinism, transforms, and DataLoader batching:
+---
+
+## 🔬 Baseline Reproduction
+
+Phase 2 establishes two reproducible baselines evaluated on the deterministic 640-sample validation split (`seed: 42`):
+1. **Baseline 1 — Bicubic**: 2x Bicubic Interpolation
+2. **Baseline 2 — Simple DnCNN**: 7-Layer Conv+BatchNorm+ReLU Residual Denoising CNN (186,177 parameters)
+
+### 1. Train DnCNN Baseline from Scratch
+Train the simple DnCNN baseline on the real paired dataset:
 ```bash
-py -m unittest tests/test_dataset.py
+py -u baseline/train_dncnn.py --epochs 3 --batch_size 16 --save_path checkpoints/dncnn_baseline.pth --seed 42
 ```
 
-### 4. Visualize Degradation Sample
-Generate a side-by-side comparison of a clean sample vs synthetic Poisson-Gaussian degradation:
+### 2. Evaluate & Benchmark Baselines
+Evaluate both Bicubic and DnCNN models on the 640 validation samples, measuring PSNR, SSIM, LPIPS, and inference runtime:
 ```bash
-py scripts/visualize_sample.py --config configs/default_config.yaml
+py -u baseline/evaluate_baseline.py --config configs/default_config.yaml --dncnn_weights checkpoints/dncnn_baseline.pth --output_json results/baseline_comparison.json --output_img_dir results/baseline
+```
+
+### 3. Run Baseline Unit Tests
+Execute the baseline unit test suite:
+```bash
+py -m unittest tests/test_baselines.py
 ```
 
 ---
@@ -73,7 +87,8 @@ py inference.py --input_dir ./path/to/inputs --output_dir ./path/to/outputs
 
 ---
 
-## 📄 Documentation
+## 📄 Documentation & Experiment Records
 
 - **Architecture Specification**: [docs/architecture.md](docs/architecture.md)
 - **Implementation Status & TODOs**: [docs/implementation_status.md](docs/implementation_status.md)
+- **Baseline Experiment Records**: [docs/experiments.md](docs/experiments.md)
